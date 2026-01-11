@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.pyc
+
+# Virtual env
+.venv/
+
+# SQLite database
+*.db
+
+# OS
+.DS_Store
+
+# Logs
+logs/*.log

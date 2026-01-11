@@ -1,0 +1,2 @@
+# File watching (later)
+watchdog>=4.0.0
