@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 from typing import Any
 from pathlib import Path
 from dataclasses import dataclass
@@ -26,6 +27,7 @@ class AuditEvent:
 class AuditLogger:
     def __init__(self, conn: sqlite3.Connection) -> None:
         self._conn = conn
+        self._lock = threading.Lock()
 
     def log(
         self,
@@ -50,24 +52,25 @@ class AuditLogger:
         )
         time_str = event_time or utc_now_iso()
 
-        cur = self._conn.execute(
-            """
+        with self._lock:
+            cur = self._conn.execute(
+                """
             INSERT INTO audit_events (
-              event_time, event_type, src_path, dest_path,
-              file_size_bytes, sha256, extra_json
+            event_time, event_type, src_path, dest_path,
+            file_size_bytes, sha256, extra_json
             )
             VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (
-                time_str,
-                event_type,
-                src_str,
-                dest_str,
-                file_size_bytes,
-                sha256,
-                extra_json,
-            ),
-        )
+                (
+                    time_str,
+                    event_type,
+                    src_str,
+                    dest_str,
+                    file_size_bytes,
+                    sha256,
+                    extra_json,
+                ),
+            )
         self._conn.commit()
         return int(cur.lastrowid)
 
@@ -75,13 +78,14 @@ class AuditLogger:
         """
         Fetch latest audit events (most recent first).
         """
-        cur = self._conn.execute(
-            """
+        with self._lock:
+            cur = self._conn.execute(
+                """
             SELECT id, event_time, event_type, src_path, dest_path, file_size_bytes, sha256, extra_json
             FROM audit_events
             ORDER BY id DESC
             LIMIT ?
             """,
-            (limit,),
-        )
+                (limit,),
+            )
         return list(cur.fetchall())

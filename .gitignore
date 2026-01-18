@@ -5,8 +5,13 @@ __pycache__/
 # Virtual env
 .venv/
 
+/sandbox
+
 # SQLite database
 *.db
+*.db-wal
+*.db-shm
+
 
 # OS
 .DS_Store
