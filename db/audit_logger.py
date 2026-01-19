@@ -89,3 +89,47 @@ class AuditLogger:
                 (limit,),
             )
         return list(cur.fetchall())
+
+    def search(
+        self,
+        *,
+        event_type: str | None = None,
+        contains: str | None = None,
+        limit: int = 50,
+    ) -> list[sqlite3.Row]:
+        """
+        Search audit events with optional filters:
+        - event_type: exact match (e.g., 'deleted', 'moved')
+        - contains: substring match against src_path OR dest_path
+        Returns most recent first.
+        """
+
+        where_clauses: list[str] = []
+        params: list[Any] = []
+
+        if event_type:
+            where_clauses.append("event_type = ?")
+            params.append(event_type)
+
+        if contains:
+            # Search in src_path and dest_path
+            like = f"%{contains}%"
+            where_clauses.append("(src_path LIKE ? OR dest_path LIKE ?)")
+            params.extend([like, like])
+
+        where_sql = ""
+        if where_clauses:
+            where_sql = "WHERE " + " AND ".join(where_clauses)
+
+        sql = f"""
+            SELECT id, event_time, event_type, src_path, dest_path, file_size_bytes, sha256, extra_json
+            FROM audit_events
+            {where_sql}
+            ORDER BY id DESC
+            LIMIT ?
+        """
+        params.append(limit)
+
+        with self._lock:
+            cur = self._conn.execute(sql, params)
+            return list(cur.fetchall())
