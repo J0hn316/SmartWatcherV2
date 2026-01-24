@@ -79,6 +79,14 @@ def build_parser() -> argparse.ArgumentParser:
                     ("--verbose",),
                     {"action": "store_true", "help": "Print watcher status messages"},
                 ),
+                ArgSpec(
+                    ("--ignore",),
+                    {
+                        "action": "append",
+                        "default": [],
+                        "help": "Ignore pattern (can be repeated). Example: --ignore '*.log' --ignore 'node_modules/*'",
+                    },
+                ),
             ],
         },
         "tail": {
@@ -155,6 +163,7 @@ def cmd_watch(args: argparse.Namespace) -> None:
         logger=logger,
         recursive=args.recursive,
         include_dirs=args.include_dirs,
+        ignore_patterns=args.ignore,
         verbose=args.verbose,
     )
 

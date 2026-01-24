@@ -15,6 +15,7 @@ def run_watcher(
     logger: AuditLogger,
     recursive: bool = True,
     include_dirs: bool = False,
+    ignore_patterns: list[str] | None = None,
     verbose: bool = False,
 ) -> None:
     """
@@ -30,7 +31,9 @@ def run_watcher(
     if not folder.is_dir():
         raise NotADirectoryError(f"Watch path is not a folder: {folder}")
 
-    handler = AuditEventHandler(logger, include_dirs=include_dirs)
+    handler = AuditEventHandler(
+        logger, include_dirs=include_dirs, ignore_patterns=ignore_patterns
+    )
 
     observer = Observer()
     observer.schedule(handler, str(folder), recursive=recursive)

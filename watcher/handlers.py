@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from pathlib import Path
+import fnmatch
 from typing import Any
+from pathlib import Path
 
 from watchdog.events import FileSystemEventHandler
 from watchdog.events import (
@@ -12,6 +13,47 @@ from watchdog.events import (
 )
 
 from db.audit_logger import AuditLogger
+
+DEFAULT_IGNORE_PATTERNS: tuple[str, ...] = (
+    # OS / metadata
+    ".DS_Store",
+    "Thumbs.db",
+    "desktop.ini",
+    # Editor / temp / swap
+    "*.tmp",
+    "*.temp",
+    "*.swp",
+    "*.swo",
+    "*~",
+    "~$*",
+    # Download partials
+    "*.crdownload",
+    "*.part",
+    # Common lock files
+    "*.lock",
+)
+
+
+def should_ignore(path: Path, patterns: list[str]) -> bool:
+    """
+    Returns True if `path` matches any ignore pattern.
+    Matches against both the filename and the full path.
+    """
+
+    name = path.name
+    full = str(path)
+
+    # On Windows, paths can differ in case; normalize for matching
+    name_lower = name.lower()
+    full_lower = full.lower()
+
+    for pattern in patterns:
+        pattern_lower = pattern.lower()
+        if fnmatch.fnmatch(name_lower, pattern_lower) or fnmatch.fnmatch(
+            full_lower, pattern_lower
+        ):
+            return True
+    return False
 
 
 def safe_file_size(path: Path) -> int | None:
@@ -32,18 +74,33 @@ class AuditEventHandler(FileSystemEventHandler):
     Watchdog callback handler that logs filesystem events to SQLite.
     """
 
-    def __init__(self, logger: AuditLogger, *, include_dirs: bool = False) -> None:
+    def __init__(
+        self,
+        logger: AuditLogger,
+        *,
+        include_dirs: bool = False,
+        ignore_patterns: list[str] | None = None,
+    ) -> None:
         self._logger = logger
         self._include_dirs = include_dirs
+        self._ignore_patterns = list(DEFAULT_IGNORE_PATTERNS)
+        if ignore_patterns:
+            self._ignore_patterns.extend(ignore_patterns)
 
     def _should_log(self, is_directory: bool) -> bool:
         return self._include_dirs or (not is_directory)
+
+    def _should_ignore_path(self, path: Path) -> bool:
+        return should_ignore(path, self._ignore_patterns)
 
     def on_created(self, event: FileCreatedEvent) -> None:
         if not self._should_log(event.is_directory):
             return
 
         src = Path(event.src_path)
+        if self._should_ignore_path(src):
+            return
+
         self._logger.log(
             event_type="created",
             src_path=src,
@@ -56,6 +113,9 @@ class AuditEventHandler(FileSystemEventHandler):
             return
 
         src = Path(event.src_path)
+        if self._should_ignore_path(src):
+            return
+
         self._logger.log(
             event_type="modified",
             src_path=src,
@@ -68,6 +128,9 @@ class AuditEventHandler(FileSystemEventHandler):
             return
 
         src = Path(event.src_path)
+        if self._should_ignore_path(src):
+            return
+
         self._logger.log(
             event_type="deleted",
             src_path=src,
@@ -80,6 +143,10 @@ class AuditEventHandler(FileSystemEventHandler):
 
         src = Path(event.src_path)
         dest = Path(event.dest_path)
+
+        if self._should_ignore_path(src) or self._should_ignore_path(dest):
+            return
+
         self._logger.log(
             event_type="moved",
             src_path=src,
