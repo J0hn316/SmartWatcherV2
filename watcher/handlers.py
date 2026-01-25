@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 import fnmatch
 from typing import Any
 from pathlib import Path
@@ -80,15 +81,36 @@ class AuditEventHandler(FileSystemEventHandler):
         *,
         include_dirs: bool = False,
         ignore_patterns: list[str] | None = None,
+        modified_debounce_seconds: float = 1.0,
     ) -> None:
         self._logger = logger
         self._include_dirs = include_dirs
+
         self._ignore_patterns = list(DEFAULT_IGNORE_PATTERNS)
         if ignore_patterns:
             self._ignore_patterns.extend(ignore_patterns)
 
+        self._modified_debounce_seconds = modified_debounce_seconds
+        self._last_modified_logged_at: dict[str, float] = {}
+
     def _should_log(self, is_directory: bool) -> bool:
         return self._include_dirs or (not is_directory)
+
+    def _should_log_modified(self, path: Path) -> bool:
+        """
+        Debounce modified events per path.
+        Returns True if enough time has passed since the last logged modified event.
+        """
+
+        key = str(path)
+        now = time.monotonic()
+
+        last = self._last_modified_logged_at.get(key)
+        if last is not None and (now - last) < self._modified_debounce_seconds:
+            return False
+
+        self._last_modified_logged_at[key] = now
+        return True
 
     def _should_ignore_path(self, path: Path) -> bool:
         return should_ignore(path, self._ignore_patterns)
@@ -114,6 +136,9 @@ class AuditEventHandler(FileSystemEventHandler):
 
         src = Path(event.src_path)
         if self._should_ignore_path(src):
+            return
+
+        if not self._should_log_modified(src):
             return
 
         self._logger.log(
