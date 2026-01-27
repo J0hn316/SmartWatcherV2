@@ -17,6 +17,7 @@ def run_watcher(
     include_dirs: bool = False,
     ignore_patterns: list[str] | None = None,
     verbose: bool = False,
+    hash_enabled: bool = False,
 ) -> None:
     """
     Start watching `folder` and log filesystem events using `logger`.
@@ -32,7 +33,10 @@ def run_watcher(
         raise NotADirectoryError(f"Watch path is not a folder: {folder}")
 
     handler = AuditEventHandler(
-        logger, include_dirs=include_dirs, ignore_patterns=ignore_patterns
+        logger,
+        include_dirs=include_dirs,
+        ignore_patterns=ignore_patterns,
+        hash_enabled=hash_enabled,
     )
 
     observer = Observer()
@@ -40,7 +44,9 @@ def run_watcher(
     observer.start()
 
     logger.log(
-        event_type="startup", src_path=str(folder), extra={"recursive": recursive}
+        event_type="startup",
+        src_path=str(folder),
+        extra={"recursive": recursive, "hash_enabled": hash_enabled},
     )
 
     if verbose:

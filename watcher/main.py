@@ -87,6 +87,13 @@ def build_parser() -> argparse.ArgumentParser:
                         "help": "Ignore pattern (can be repeated). Example: --ignore '*.log' --ignore 'node_modules/*'",
                     },
                 ),
+                ArgSpec(
+                    ("--hash",),
+                    {
+                        "action": "store_true",
+                        "help": "Compute SHA-256 for created/modified/moved files (slower)",
+                    },
+                ),
             ],
         },
         "tail": {
@@ -165,6 +172,7 @@ def cmd_watch(args: argparse.Namespace) -> None:
         include_dirs=args.include_dirs,
         ignore_patterns=args.ignore,
         verbose=args.verbose,
+        hash_enabled=args.hash,
     )
 
 

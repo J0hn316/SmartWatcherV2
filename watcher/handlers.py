@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 import fnmatch
+import hashlib
 from typing import Any
 from pathlib import Path
 
@@ -70,6 +71,25 @@ def safe_file_size(path: Path) -> int | None:
         return None
 
 
+def safe_sha256(path: Path) -> str | None:
+    """
+    Compute SHA-256 of a file in a streaming way.
+    Returns None if the file can't be read (missing, locked, directory, etc.).
+    """
+
+    try:
+        if not path.is_file():
+            return None
+
+        h = hashlib.sha256()
+        with path.open("rb") as file:
+            for chuck in iter(lambda: file.read(1024 * 1024), b""):
+                h.update(chuck)
+        return h.hexdigest()
+    except OSError:
+        return None
+
+
 class AuditEventHandler(FileSystemEventHandler):
     """
     Watchdog callback handler that logs filesystem events to SQLite.
@@ -82,6 +102,7 @@ class AuditEventHandler(FileSystemEventHandler):
         include_dirs: bool = False,
         ignore_patterns: list[str] | None = None,
         modified_debounce_seconds: float = 1.0,
+        hash_enabled: bool = False,
     ) -> None:
         self._logger = logger
         self._include_dirs = include_dirs
@@ -92,6 +113,7 @@ class AuditEventHandler(FileSystemEventHandler):
 
         self._modified_debounce_seconds = modified_debounce_seconds
         self._last_modified_logged_at: dict[str, float] = {}
+        self._hash_enabled = hash_enabled
 
     def _should_log(self, is_directory: bool) -> bool:
         return self._include_dirs or (not is_directory)
@@ -115,6 +137,11 @@ class AuditEventHandler(FileSystemEventHandler):
     def _should_ignore_path(self, path: Path) -> bool:
         return should_ignore(path, self._ignore_patterns)
 
+    def _maybe_hash(self, path: Path) -> str | None:
+        if not self._hash_enabled:
+            return None
+        return safe_sha256(path)
+
     def on_created(self, event: FileCreatedEvent) -> None:
         if not self._should_log(event.is_directory):
             return
@@ -127,38 +154,7 @@ class AuditEventHandler(FileSystemEventHandler):
             event_type="created",
             src_path=src,
             file_size_bytes=safe_file_size(src),
-            extra={"is_directory": event.is_directory},
-        )
-
-    def on_modified(self, event: FileModifiedEvent) -> None:
-        if not self._should_log(event.is_directory):
-            return
-
-        src = Path(event.src_path)
-        if self._should_ignore_path(src):
-            return
-
-        if not self._should_log_modified(src):
-            return
-
-        self._logger.log(
-            event_type="modified",
-            src_path=src,
-            file_size_bytes=safe_file_size(src),
-            extra={"is_directory": event.is_directory},
-        )
-
-    def on_deleted(self, event: FileDeletedEvent) -> None:
-        if not self._should_log(event.is_directory):
-            return
-
-        src = Path(event.src_path)
-        if self._should_ignore_path(src):
-            return
-
-        self._logger.log(
-            event_type="deleted",
-            src_path=src,
+            sha256=self._maybe_hash(src),
             extra={"is_directory": event.is_directory},
         )
 
@@ -177,5 +173,39 @@ class AuditEventHandler(FileSystemEventHandler):
             src_path=src,
             dest_path=dest,
             file_size_bytes=safe_file_size(dest),
+            sha256=self._maybe_hash(dest),
+            extra={"is_directory": event.is_directory},
+        )
+
+    def on_modified(self, event: FileModifiedEvent) -> None:
+        if not self._should_log(event.is_directory):
+            return
+
+        src = Path(event.src_path)
+        if self._should_ignore_path(src):
+            return
+
+        if not self._should_log_modified(src):
+            return
+
+        self._logger.log(
+            event_type="modified",
+            src_path=src,
+            file_size_bytes=safe_file_size(src),
+            sha256=self._maybe_hash(src),
+            extra={"is_directory": event.is_directory},
+        )
+
+    def on_deleted(self, event: FileDeletedEvent) -> None:
+        if not self._should_log(event.is_directory):
+            return
+
+        src = Path(event.src_path)
+        if self._should_ignore_path(src):
+            return
+
+        self._logger.log(
+            event_type="deleted",
+            src_path=src,
             extra={"is_directory": event.is_directory},
         )
