@@ -133,3 +133,27 @@ class AuditLogger:
         with self._lock:
             cur = self._conn.execute(sql, params)
             return list(cur.fetchall())
+
+    def latest_hashes(self) -> dict[str, str]:
+        """
+        Return a mapping of file path -> latest recorded sha256.
+        Only includes rows where sha256 is not NULL.
+        """
+
+        sql = """
+        SELECT src_path, sha256
+        FROM audit_events
+        WHERE sha256 IS NOT NULL
+        ORDER BY id DESC
+        """
+
+        results: dict[str, str] = {}
+
+        with self._lock:
+            cur = self._conn.execute(sql)
+            for row in cur.fetchall():
+                path = row["src_path"]
+                if path and path not in results:
+                    results[path] = row["sha256"]
+
+        return results

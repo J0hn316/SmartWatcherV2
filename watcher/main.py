@@ -1,14 +1,17 @@
 from __future__ import annotations
 
-import argparse
 import sqlite3
-from dataclasses import dataclass
-from pathlib import Path
+import argparse
 from typing import Any
+from pathlib import Path
+from dataclasses import dataclass
+
+from watcher.watcher import run_watcher
+from watcher.handlers import safe_sha256
 
 from db.audit_logger import AuditLogger
 from db.database import get_connection, init_db
-from watcher.watcher import run_watcher
+
 
 DEFAULT_DB_PATH = Path("data") / "watcher_audit.db"
 
@@ -150,6 +153,23 @@ def build_parser() -> argparse.ArgumentParser:
                 ),
             ],
         },
+        "verify": {
+            "help": "Verify current files against latest recorded SHA-256 hashes",
+            "args": [
+                ArgSpec(
+                    ("--folder",),
+                    {"type": Path, "required": True, "help": "Folder to verify"},
+                ),
+                ArgSpec(
+                    ("--db",),
+                    {
+                        "type": Path,
+                        "default": DEFAULT_DB_PATH,
+                        "help": "Path to SQLite database file",
+                    },
+                ),
+            ],
+        },
     }
 
     # Create subparsers in a loop
@@ -190,6 +210,52 @@ def cmd_tail(args: argparse.Namespace) -> None:
     print_rows(rows)
 
 
+def cmd_verify(args: argparse.Namespace) -> None:
+    conn = get_connection(args.db)
+    init_db(conn)
+    logger = AuditLogger(conn)
+
+    base = args.folder.resolve()
+    recorded = logger.latest_hashes()
+
+    if not recorded:
+        print("No recorded hashes found. Run watcher with --hash first.")
+        return
+
+    changed = missing = ok = unhashed = 0
+
+    for path_str, old_hash in recorded.items():
+        path = Path(path_str)
+
+        try:
+            path.resolve().relative_to(base)
+        except ValueError:
+            continue
+
+        if not path.exists():
+            print(f"⚠️ Missing {path}")
+            missing += 1
+            continue
+
+        new_hash = safe_sha256(path)
+        if new_hash is None:
+            print(f"⚠️ UNHASHED {path}")
+            unhashed += 1
+            continue
+
+        if new_hash == old_hash:
+            ok += 1
+        else:
+            print(f"❌ CHANGED  {path}")
+            changed += 1
+
+    print("\nSummary:")
+    print(f"  OK:        {ok}")
+    print(f"  Changed:   {changed}")
+    print(f"  Missing:   {missing}")
+    print(f"  Unhashed:  {unhashed}")
+
+
 def cmd_search(args: argparse.Namespace) -> None:
     conn = get_connection(args.db)
     init_db(conn)
@@ -218,6 +284,8 @@ def main() -> None:
         cmd_tail(args)
     elif args.command == "search":
         cmd_search(args)
+    elif args.command == "verify":
+        cmd_verify(args)
     else:
         parser.error(f"Unknown command: {args.command}")
 
