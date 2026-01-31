@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 import argparse
 from typing import Any
@@ -16,7 +17,7 @@ from db.database import get_connection, init_db
 DEFAULT_DB_PATH = Path("data") / "watcher_audit.db"
 
 
-def print_rows(rows: list[sqlite3.Row]) -> None:
+def print_rows(rows: list[sqlite3.Row], *, show_hash: bool = False) -> None:
     """
     Print rows in a consistent, readable format.
     Expects rows ordered newest->oldest, prints oldest->newest (tail-like).
@@ -26,8 +27,14 @@ def print_rows(rows: list[sqlite3.Row]) -> None:
         src = row["src_path"] or ""
         dest = row["dest_path"] or ""
         arrow = f" -> {dest}" if dest else ""
+
+        hash_part = ""
+        if show_hash:
+            sha = row["sha256"]
+            hash_part = f" | sha256={sha}" if sha else " | sha256=<none>"
+
         print(
-            f"#{row['id']} | {row['event_time']} | {row['event_type']} | {src}{arrow}"
+            f"#{row['id']} | {row['event_time']} | {row['event_type']} | {src}{arrow}{hash_part}"
         )
 
 
@@ -118,6 +125,10 @@ def build_parser() -> argparse.ArgumentParser:
                         "help": "Number of rows to print (default: 20)",
                     },
                 ),
+                ArgSpec(
+                    ("--show-hash",),
+                    {"action": "store_true", "help": "Show sha256 column in output"},
+                ),
             ],
         },
         "search": {
@@ -151,6 +162,17 @@ def build_parser() -> argparse.ArgumentParser:
                         "help": "Max rows to print (default: 50)",
                     },
                 ),
+                ArgSpec(
+                    ("--show-hash",),
+                    {"action": "store_true", "help": "Show sha256 column in output"},
+                ),
+                ArgSpec(
+                    ("--since",),
+                    {
+                        "type": str,
+                        "help": "Only include events at/after this ISO datetime (example: 2026-01-31T10:30:00)",
+                    },
+                ),
             ],
         },
         "verify": {
@@ -166,6 +188,14 @@ def build_parser() -> argparse.ArgumentParser:
                         "type": Path,
                         "default": DEFAULT_DB_PATH,
                         "help": "Path to SQLite database file",
+                    },
+                ),
+                ArgSpec(
+                    ("--json",),
+                    {
+                        "dest": "json_path",
+                        "type": Path,
+                        "help": "Write verification report to a JSON file",
                     },
                 ),
             ],
@@ -207,7 +237,7 @@ def cmd_tail(args: argparse.Namespace) -> None:
         print("No audit events found.")
         return
 
-    print_rows(rows)
+    print_rows(rows, show_hash=args.show_hash)
 
 
 def cmd_verify(args: argparse.Namespace) -> None:
@@ -223,6 +253,10 @@ def cmd_verify(args: argparse.Namespace) -> None:
         return
 
     changed = missing = ok = unhashed = 0
+    changed_paths: list[str] = []
+    missing_paths: list[str] = []
+    unhashed_paths: list[str] = []
+    ok_paths: list[str] = []
 
     for path_str, old_hash in recorded.items():
         path = Path(path_str)
@@ -235,19 +269,43 @@ def cmd_verify(args: argparse.Namespace) -> None:
         if not path.exists():
             print(f"⚠️ Missing {path}")
             missing += 1
+            missing_paths.append(str(path))
             continue
 
         new_hash = safe_sha256(path)
         if new_hash is None:
             print(f"⚠️ UNHASHED {path}")
             unhashed += 1
+            unhashed_paths.append(str(path))
             continue
 
         if new_hash == old_hash:
             ok += 1
+            ok_paths.append(str(path))
         else:
             print(f"❌ CHANGED  {path}")
             changed += 1
+            changed_paths.append(str(path))
+
+    summary = {
+        "ok": ok,
+        "changed": changed,
+        "missing": missing,
+        "unhashed": unhashed,
+    }
+    report = {
+        "folder": str(base),
+        "summary": summary,
+        "changed": changed_paths,
+        "missing": missing_paths,
+        "unhashed": unhashed_paths,
+        "ok": ok_paths,
+    }
+
+    if args.json_path:
+        args.json_path.parent.mkdir(parents=True, exist_ok=True)
+        args.json_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+        print(f"\n📝 Wrote report to: {args.json_path}")
 
     print("\nSummary:")
     print(f"  OK:        {ok}")
@@ -264,6 +322,7 @@ def cmd_search(args: argparse.Namespace) -> None:
     rows = logger.search(
         event_type=args.event_type,
         contains=args.contains,
+        since=args.since,
         limit=args.limit,
     )
 
@@ -271,7 +330,7 @@ def cmd_search(args: argparse.Namespace) -> None:
         print("No matching audit events found.")
         return
 
-    print_rows(rows)
+    print_rows(rows, show_hash=args.show_hash)
 
 
 def main() -> None:

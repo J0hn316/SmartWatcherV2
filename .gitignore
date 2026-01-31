@@ -6,6 +6,7 @@ __pycache__/
 .venv/
 
 /sandbox
+/reports
 
 # SQLite database
 *.db

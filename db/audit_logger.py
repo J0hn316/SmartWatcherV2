@@ -5,6 +5,7 @@ import sqlite3
 import threading
 from typing import Any
 from pathlib import Path
+from datetime import datetime
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -95,6 +96,7 @@ class AuditLogger:
         *,
         event_type: str | None = None,
         contains: str | None = None,
+        since: str | None = None,
         limit: int = 50,
     ) -> list[sqlite3.Row]:
         """
@@ -116,6 +118,16 @@ class AuditLogger:
             like = f"%{contains}%"
             where_clauses.append("(src_path LIKE ? OR dest_path LIKE ?)")
             params.extend([like, like])
+
+        if since:
+            # Validate ISO-ish datetime input (raises ValueError if invalid)
+            parsed = datetime.fromisoformat(since)
+
+            # Normalize back to ISO string (keeps format consistent)
+            since_iso = parsed.isoformat()
+
+            where_clauses.append("event_time >= ?")
+            params.append(since_iso)
 
         where_sql = ""
         if where_clauses:
